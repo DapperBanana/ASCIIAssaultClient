@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Net.Http;
 using System.Threading;
+using System.IO;
 
 namespace ASCII_Assault_App
 {
@@ -18,6 +19,11 @@ namespace ASCII_Assault_App
         private TextBox textBoxOutput;
         private TextBox textBoxMessage;
         private Button buttonSendMessage;
+        private Button buttonConnect;
+
+        private string serverAddress = "127.0.0.1";
+        private int serverPort = 5000;
+        private bool isConnected = false;
 
         public MainForm()
         {
@@ -26,122 +32,152 @@ namespace ASCII_Assault_App
 
         private void InitializeComponent()
         {
+            this.Text = "ASCII Assault";
+            this.Size = new System.Drawing.Size(640, 480);
+            this.StartPosition = FormStartPosition.CenterScreen;
+            this.BackColor = System.Drawing.Color.Black;
+
             textBoxOutput = new TextBox();
             textBoxOutput.Multiline = true;
-            textBoxOutput.Dock = DockStyle.Fill;
+            textBoxOutput.ReadOnly = true;
+            textBoxOutput.ScrollBars = ScrollBars.Vertical;
+            textBoxOutput.Location = new System.Drawing.Point(12, 12);
+            textBoxOutput.Size = new System.Drawing.Size(600, 360);
+            textBoxOutput.BackColor = System.Drawing.Color.Black;
+            textBoxOutput.ForeColor = System.Drawing.Color.LimeGreen;
+            textBoxOutput.Font = new System.Drawing.Font("Consolas", 10F);
 
             textBoxMessage = new TextBox();
-            textBoxMessage.Dock = DockStyle.Bottom;
+            textBoxMessage.Location = new System.Drawing.Point(12, 390);
+            textBoxMessage.Size = new System.Drawing.Size(420, 24);
+            textBoxMessage.BackColor = System.Drawing.Color.FromArgb(20, 20, 20);
+            textBoxMessage.ForeColor = System.Drawing.Color.LimeGreen;
+            textBoxMessage.Font = new System.Drawing.Font("Consolas", 10F);
+            textBoxMessage.KeyDown += TextBoxMessage_KeyDown;
 
             buttonSendMessage = new Button();
-            buttonSendMessage.Text = "Send Message";
-            buttonSendMessage.Dock = DockStyle.Bottom;
-            buttonSendMessage.Click += buttonSendMessage_Click;
+            buttonSendMessage.Text = "Send";
+            buttonSendMessage.Location = new System.Drawing.Point(440, 388);
+            buttonSendMessage.Size = new System.Drawing.Size(80, 28);
+            buttonSendMessage.FlatStyle = FlatStyle.Flat;
+            buttonSendMessage.BackColor = System.Drawing.Color.FromArgb(30, 30, 30);
+            buttonSendMessage.ForeColor = System.Drawing.Color.LimeGreen;
+            buttonSendMessage.Click += ButtonSendMessage_Click;
 
-            Controls.Add(textBoxOutput);
-            Controls.Add(textBoxMessage);
-            Controls.Add(buttonSendMessage);
+            buttonConnect = new Button();
+            buttonConnect.Text = "Connect";
+            buttonConnect.Location = new System.Drawing.Point(528, 388);
+            buttonConnect.Size = new System.Drawing.Size(84, 28);
+            buttonConnect.FlatStyle = FlatStyle.Flat;
+            buttonConnect.BackColor = System.Drawing.Color.FromArgb(30, 30, 30);
+            buttonConnect.ForeColor = System.Drawing.Color.LimeGreen;
+            buttonConnect.Click += ButtonConnect_Click;
 
-            // Other GUI initialization logic
+            this.Controls.Add(textBoxOutput);
+            this.Controls.Add(textBoxMessage);
+            this.Controls.Add(buttonSendMessage);
+            this.Controls.Add(buttonConnect);
         }
 
-        private void buttonSendMessage_Click(object sender, EventArgs e)
+        private void ButtonConnect_Click(object sender, EventArgs e)
         {
-            string messageToSend = textBoxMessage.Text;
-            SendMessage(messageToSend);
-        }
-
-        private void SendMessage(string message)
-        {
-            byte[] messageBytes = Encoding.ASCII.GetBytes(message);
-            clientStream.Write(messageBytes, 0, messageBytes.Length);
-            clientStream.Flush();
-        }
-
-        protected override void OnLoad(EventArgs e)
-        {
-            base.OnLoad(e);
-            InitializeClient();
-        }
-
-        private void InitializeClient()
-        {
-            // Implement your code to initialize the client connection
-            // This is a placeholder for demonstration purposes
-            displayMessage("Client initialized.");
-
-            string serverIp = "127.0.0.1";
-            int serverPort = 6969;
+            if (isConnected)
+                return;
 
             try
             {
-                tcpClient = new TcpClient(serverIp, serverPort);
+                tcpClient = new TcpClient();
+                tcpClient.Connect(serverAddress, serverPort);
                 clientStream = tcpClient.GetStream();
+                isConnected = true;
+                AppendOutput("Connected to server at " + serverAddress + ":" + serverPort);
+                buttonConnect.Text = "Online";
+                buttonConnect.Enabled = false;
 
-                // Start a separate thread for receiving messages
-                Thread receiveThread = new Thread(new ThreadStart(ReceiveMessages));
-                receiveThread.Start();
-
-                displayMessage("Connected to the server.");
+                Thread listenThread = new Thread(ListenForMessages);
+                listenThread.IsBackground = true;
+                listenThread.Start();
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Error connecting to the server: " + ex.Message);
+                AppendOutput("Connection failed: " + ex.Message);
             }
         }
 
-        private void ReceiveMessages()
+        private void ListenForMessages()
         {
-
-            while (true)
+            byte[] buffer = new byte[4096];
+            while (isConnected)
             {
                 try
                 {
-                    byte[] messageBytes = new byte[4096];
-                    int bytesRead = clientStream.Read(messageBytes, 0, messageBytes.Length);
+                    int bytesRead = clientStream.Read(buffer, 0, buffer.Length);
                     if (bytesRead == 0)
+                    {
+                        isConnected = false;
+                        AppendOutput("Disconnected from server.");
                         break;
-
-                    string message = Encoding.ASCII.GetString(messageBytes, 0, bytesRead);
-
-                    displayMessage(message);
-
-                    Console.WriteLine(message);
+                    }
+                    string message = Encoding.ASCII.GetString(buffer, 0, bytesRead);
+                    AppendOutput(message);
                 }
-                catch (Exception ex)
+                catch (IOException)
                 {
-                    Console.WriteLine("Error: " + ex.Message);
+                    isConnected = false;
+                    AppendOutput("Connection lost.");
                     break;
                 }
             }
         }
-        private void displayMessage(string message)
+
+        private void ButtonSendMessage_Click(object sender, EventArgs e)
         {
-            BeginInvoke((Action)(() =>
+            SendMessage();
+        }
+
+        private void TextBoxMessage_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Enter)
             {
-                textBoxOutput.AppendText(message + Environment.NewLine);
-            }));
+                SendMessage();
+                e.SuppressKeyPress = true;
+            }
         }
 
-        protected override void OnFormClosing(FormClosingEventArgs e)
+        private void SendMessage()
         {
-            base.OnFormClosing(e);
+            if (!isConnected || string.IsNullOrWhiteSpace(textBoxMessage.Text))
+                return;
 
-            // Implement any cleanup logic here, such as closing the network connection
-            // This is a placeholder for demonstration purposes
-            displayMessage("Closing the application...");
-            tcpClient?.Close();
+            try
+            {
+                byte[] data = Encoding.ASCII.GetBytes(textBoxMessage.Text);
+                clientStream.Write(data, 0, data.Length);
+                clientStream.Flush();
+                AppendOutput("> " + textBoxMessage.Text);
+                textBoxMessage.Clear();
+            }
+            catch (Exception ex)
+            {
+                AppendOutput("Send error: " + ex.Message);
+            }
         }
-    }
 
-    class Program
-    {
+        private void AppendOutput(string text)
+        {
+            if (textBoxOutput.InvokeRequired)
+            {
+                textBoxOutput.Invoke(new Action(() => AppendOutput(text)));
+                return;
+            }
+            textBoxOutput.AppendText(text + Environment.NewLine);
+        }
+
         [STAThread]
         static void Main()
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-
             Application.Run(new MainForm());
         }
     }
